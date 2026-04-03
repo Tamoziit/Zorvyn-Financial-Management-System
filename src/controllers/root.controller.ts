@@ -17,7 +17,7 @@ export const serveDocs = async (req: Request, res: Response) => {
             <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
             <title>Zorvyn Finance API</title>
             <link rel="stylesheet"
-                href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown-light.min.css"/>
+                href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown-dark.min.css"/>
             <style>
                 body {
                     background: #0d1117;
@@ -33,6 +33,18 @@ export const serveDocs = async (req: Request, res: Response) => {
                     max-width: 860px;
                     width: 100%;
                     box-shadow: 0 0 30px rgba(0,0,0,0.5);
+                }
+                .markdown-body table tr {
+                    background-color: #161b22;
+                    border-top: 1px solid #30363d;
+                }
+                .markdown-body table tr:nth-child(2n) {
+                    background-color: #1c2128;
+                }
+                .markdown-body table th,
+                .markdown-body table td {
+                    border: 1px solid #30363d;
+                    color: #e6edf3;
                 }
             </style>
         </head>

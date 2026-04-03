@@ -18,6 +18,7 @@
    - [Auth Routes](#auth-routes--apiv1auth)
    - [User Routes](#user-routes--apiv1user)
    - [Account Routes](#account-routes--apiv1account)
+   - [Transaction Routes](#transaction-routes--apiv1transactions)
    - [Test Routes](#test-routes--apiv1test)
 8. [Running Locally](#8-running-locally)
 
@@ -927,6 +928,283 @@ Sends a test email via Resend to validate the email service integration.
 |---|---|---|
 | `400` | `{ "error": "All fields required" }` | `to`, `subject`, or `message` missing |
 | `500` | `{ "error": "Internal Server error" }` | Resend API failure or unexpected error |
+
+---
+
+### Transaction Routes — `/api/v1/transactions`
+
+> All endpoints require at minimum a valid `verifyToken` session. Create and admin-scoped list routes additionally require `requireAdminRole`.
+
+**Shared filter query params** (available on all three list endpoints):
+
+| Param | Type | Example | Description |
+|---|---|---|---|
+| `page` | number | `1` | Page number (default: `1`) |
+| `limit` | number | `10` | Results per page (default: `10`) |
+| `type` | string | `expense` | Filter by `income` or `expense` |
+| `category` | string | `rent` | Filter by category enum value |
+| `startDate` | string | `2026-01-01` | Include records on or after this date (ISO 8601, UTC) |
+| `endDate` | string | `2026-04-01` | Include records on or before end of this date (ISO 8601, UTC) |
+
+---
+
+#### `POST /api/v1/transactions/create-record/:id`
+
+Creates a new transaction record against an account. Updates the account balance atomically (deducts for `expense`, adds for `income`). Admin only.
+
+**Auth:** Admin token required
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the **account** to record the transaction on |
+
+**Request Body:**
+```json
+{
+  "amount": 1500,
+  "type": "expense",
+  "category": "rent",
+  "note": "Monthly rent for April"
+}
+```
+
+> `type`: `"income"` | `"expense"`  
+> `category`: `"salary"` | `"rent"` | `"luxury"` | `"essentials"` | `"loan"` | `"tax"` | `"others"`  
+> `note`: optional free-text annotation
+
+**Response `201`:**
+```json
+{
+  "_id": "663faa1b2c3d4e5f6a7b8c9d",
+  "accountId": "663f2b3c4d5e6f7a8b9c0d1e",
+  "amount": 1500,
+  "type": "expense",
+  "category": "rent",
+  "note": "Monthly rent for April",
+  "createdBy": "663f1a2b4c5d6e7f8a9b0c1d",
+  "createdAt": "2026-04-04T00:00:00.000Z",
+  "updatedAt": "2026-04-04T00:00:00.000Z"
+}
+```
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "Cannot find account with this ID" }` | Account not found |
+| `400` | `{ "error": "All fields are required" }` | `amount`, `type`, or `category` missing |
+| `400` | `{ "error": "Enter a valid Transaction amount" }` | `amount` ≤ 0 |
+| `400` | `{ "error": "Enter a valid Transaction type" }` | `type` not `income`/`expense` |
+| `400` | `{ "error": "Enter a valid Transaction category" }` | Unknown category value |
+| `400` | `{ "error": "Insufficient Balance" }` | Expense exceeds account balance |
+| `401` | `{ "error": "..." }` | Auth failure |
+| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+
+---
+
+#### `GET /api/v1/transactions/my-transactions`
+
+Returns the paginated, filterable list of **all transactions belonging to the authenticated user** across all their accounts (resolved server-side via account ownership lookup).
+
+**Auth:** Any valid user token
+
+**Query Params:** See shared filter params table above.
+
+**Example:**
+```
+GET /api/v1/transactions/my-transactions?type=expense&category=rent&startDate=2026-01-01&endDate=2026-04-01&page=1&limit=5
+```
+
+**Response `200`:**
+```json
+{
+  "transactions": [
+    {
+      "_id": "663faa1b2c3d4e5f6a7b8c9d",
+      "accountId": { "_id": "663f2b3c4d5e6f7a8b9c0d1e", "userId": "663f1a2b4c5d6e7f8a9b0c2e" },
+      "amount": 1500,
+      "type": "expense",
+      "category": "rent",
+      "note": "Monthly rent for April",
+      "createdBy": "663f1a2b4c5d6e7f8a9b0c1d",
+      "createdAt": "2026-04-04T00:00:00.000Z",
+      "updatedAt": "2026-04-04T00:00:00.000Z"
+    }
+  ],
+  "currentPage": 1,
+  "totalPages": 3,
+  "totalTransactions": 14
+}
+```
+
+> Returns `{ transactions: [], currentPage, totalPages: 0, totalTransactions: 0 }` if the user has no accounts.
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `401` | `{ "error": "..." }` | Auth failure |
+| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+
+---
+
+#### `GET /api/v1/transactions/user/:id`
+
+Returns the paginated, filterable transaction history of a **specific user** (identified by their user `_id`). Admin only.
+
+**Auth:** Admin token required
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the **user** whose transactions to fetch |
+
+**Query Params:** See shared filter params table above.
+
+**Response `200`:** Same shape as `GET /my-transactions`.
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `401` | `{ "error": "..." }` | Auth failure |
+| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+
+---
+
+#### `GET /api/v1/transactions`
+
+Returns a paginated, filterable list of **every transaction in the system**. Admin only.
+
+**Auth:** Admin token required
+
+**Query Params:** See shared filter params table above.
+
+**Response `200`:** Same shape as `GET /my-transactions`.
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `401` | `{ "error": "..." }` | Auth failure |
+| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+
+---
+
+#### `GET /api/v1/transactions/:id`
+
+Returns a **single transaction** by its `_id`. `viewer` and `analyst` roles can only access transactions tied to their own accounts; admins can access any.
+
+**Auth:** Any valid user token
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the transaction |
+
+**Response `200`:**
+```json
+{
+  "_id": "663faa1b2c3d4e5f6a7b8c9d",
+  "accountId": { "_id": "663f2b3c4d5e6f7a8b9c0d1e", "userId": "663f1a2b4c5d6e7f8a9b0c2e" },
+  "amount": 1500,
+  "type": "expense",
+  "category": "rent",
+  "note": "Monthly rent for April",
+  "createdBy": "663f1a2b4c5d6e7f8a9b0c1d",
+  "createdAt": "2026-04-04T00:00:00.000Z",
+  "updatedAt": "2026-04-04T00:00:00.000Z"
+}
+```
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "Cannot find Transaction with this ID" }` | No transaction with given ID |
+| `401` | `{ "error": "..." }` | Auth failure |
+| `403` | `{ "error": "Forbidden - You are not allowed to view any other transaction other than yours" }` | viewer/analyst accessing another user's transaction |
+| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+
+---
+
+#### `PATCH /api/v1/transactions/update/:id`
+
+Updates an existing transaction. Provides automatic and consistent account balance tracking, including reversing the original balance payload, migrating transaction to a different authorized account, and processing the updated payload securely. Admin only.
+
+**Auth:** Admin token required
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the transaction |
+
+**Request Body** (all fields optional):
+```json
+{
+  "accountId": "663f2b3c4d5e6f7a8b9c0d1e",
+  "amount": 2000,
+  "type": "expense",
+  "category": "rent",
+  "note": "Updated rent amount"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "message": "Transaction updated successfully",
+  "transaction": { ...updated transaction object... }
+}
+```
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "Transaction not found" }` | No transaction with given ID |
+| `400` | `{ "error": "Original account not found" }` | Missing underlying source account |
+| `400` | `{ "error": "Reverting this transaction would cause a negative balance on the original account" }` | Changing income into expense causes deficit |
+| `400` | `{ "error": "Insufficient Balance" }` | Updating expense to larger amount exceeds balance |
+| `403` | `{ "error": "Cannot move a transaction to another user's account" }` | Inter-account migration targets another user |
+
+---
+
+#### `DELETE /api/v1/transactions/delete-transaction/:id`
+
+Soft-deletes a transaction, keeping full audit logs in `DeletedTransactions`, removing its payload effect on the linked `Account`, and unbinding it from the related collections. Admin only.
+
+**Auth:** Admin token required
+
+**URL Params:**
+
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the transaction |
+
+**Response `200`:**
+```json
+{
+  "message": "Transaction deleted successfully",
+  "transaction": { ...deleted transaction object... }
+}
+```
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "Transaction not found" }` | No transaction with given ID |
+| `400` | `{ "error": "Cannot delete this income transaction: it would result in a negative account balance." }` | Reverse of income causes negative balance |
+| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
 
 ---
 

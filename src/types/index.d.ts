@@ -78,3 +78,47 @@ export interface UpdateUserStateProps {
 export interface AccountCreationProps {
     balance?: number;
 }
+
+export interface TransactionRecordCreationProps {
+    amount: number;
+    type: "income" | "expense";
+    category: "salary" | "rent" | "luxury" | "essentials" | "loan" | "tax" | "others";
+    note?: string;
+}
+
+interface PopulatedAccount {
+    _id: mongoose.Types.ObjectId;
+    userId: mongoose.Types.ObjectId;
+}
+
+export interface PopulatedTransaction extends mongoose.Document {
+    accountId: PopulatedAccount;
+    amount: number;
+    type: string;
+    category: string;
+    note?: string;
+    createdBy: mongoose.Types.ObjectId;
+}
+
+export type TransactionType = "income" | "expense";
+export type TransactionCategory = "salary" | "rent" | "luxury" | "essentials" | "loan" | "tax" | "others";
+
+export interface TransactionFilter {
+    type?: TransactionType;
+    category?: TransactionCategory;
+    createdAt?: {
+        $gte?: Date;
+        $lte?: Date;
+    };
+}
+
+export interface TransactionFilterQuery {
+    type?: TransactionType;
+    category?: TransactionCategory;
+    startDate?: string;
+    endDate?: string;
+}
+
+export interface AccountTransactionFilter extends TransactionFilter {
+    accountId: { $in: mongoose.Types.ObjectId[] };
+}

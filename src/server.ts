@@ -14,6 +14,7 @@ import authRoutes from './routes/auth.routes';
 import { serveDocs } from './controllers/root.controller';
 import testRoutes from './routes/test.routes';
 import userRoutes from './routes/user.routes';
+import accountRoutes from './routes/account.routes';
 
 const PORT = process.env.PORT || 3000;
 
@@ -57,6 +58,7 @@ app.use('/api/v1/test', testRoutes);
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/user', userRoutes);
+app.use('/api/v1/account', accountRoutes);
 
 app.listen(PORT, () => {
     console.log(`🚀 Server is running on PORT: ${PORT}`);

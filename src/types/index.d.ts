@@ -74,3 +74,7 @@ export interface UpdateUserStateProps {
     role?: Types.ObjectId;
     status?: "active" | "inactive";
 }
+
+export interface AccountCreationProps {
+    balance?: number;
+}

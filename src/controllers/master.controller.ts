@@ -1,17 +1,39 @@
 import { Request, Response } from "express";
-import { UserLoginBody, UserSignupBody } from "../types";
+import { MasterToken, UserSignupBody } from "../types";
+import jwt from "jsonwebtoken";
 import User from "../models/user.model";
 import bcrypt from "bcryptjs";
-import client from "../redis/client";
 import generateTokenAndSetCookie from "../utils/generateTokenAndSetCookie";
+import client from "../redis/client";
 import Role from "../models/role.model";
-import { getAccountCreatedTemplate } from "../templates/accountCreated.template";
 import sendEmail from "../utils/resendUtils";
+import { getAccountCreatedTemplate } from "../templates/accountCreated.template";
 
-export const signup = async (req: Request, res: Response) => {
+export const getToken = async (req: Request, res: Response) => {
+	try {
+		const { password }: MasterToken = req.body;
+		const masterPassword = process.env.MASTER_PASSWORD!;
+
+		if (!password || password !== masterPassword) {
+			res.status(401).json({ error: "Invalid Admin Credentials" });
+			return;
+		}
+
+		const payload = {
+			masterPassword,
+		};
+
+		const token = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: "5h" });
+		res.status(200).json(token);
+	} catch (error) {
+		console.log("Error in getting Admin Token", error);
+		res.status(500).json({ error: "Internal Server error" });
+	}
+}
+
+export const addAdmin = async (req: Request, res: Response) => {
 	try {
 		const {
-			roleName,
 			name,
 			email,
 			password,
@@ -55,9 +77,9 @@ export const signup = async (req: Request, res: Response) => {
 			return;
 		}
 
-		const role = await Role.findOne({ name: roleName });
+		const role = await Role.findOne({ name: "admin" });
 		if (!role) {
-			res.status(400).json({ error: "Error in fetching user role" });
+			res.status(400).json({ error: "Error in fetching Admin role" });
 			return;
 		}
 
@@ -120,75 +142,7 @@ export const signup = async (req: Request, res: Response) => {
 				});
 		}
 	} catch (error) {
-		console.log("Error in Signup controller", error);
-		res.status(500).json({ error: "Internal Server Error" });
-	}
-}
-
-export const login = async (req: Request, res: Response) => {
-	try {
-		const { email, password }: UserLoginBody = req.body;
-		const user = await User.findOne({ email });
-		if (!user) {
-			res.status(400).json({ error: "Cannot find User" });
-			return;
-		}
-
-		const isPasswordCorrect = await bcrypt.compare(password, user.password || "");
-		if (!isPasswordCorrect) {
-			res.status(400).json({ error: "Invalid Login Credentials" });
-			return;
-		}
-
-		const role = await Role.findById(user.role);
-		if (!role) {
-			res.status(400).json({ error: "Error in fetching user role" });
-			return;
-		}
-
-		res.cookie("ZN-jwt", "", { maxAge: 0 });
-		const token = generateTokenAndSetCookie(user._id, res);
-		const payload = {
-			token,
-			_id: user._id,
-			role: role,
-			name: user.name,
-			email: user.email,
-			mobileNo: user.mobileNo,
-			gender: user.gender
-		}
-
-		await client.set(`ZN-user:${user._id}`, JSON.stringify(payload));
-		await client.expire(`ZN-user:${user._id}`, 30 * 24 * 60 * 60);
-
-		res.status(201)
-			.header("Authorization", `Bearer ${token}`)
-			.json({
-				_id: user._id,
-				role: role.name,
-				name: user.name,
-				email: user.email,
-				mobileNo: user.mobileNo,
-				gender: user.gender,
-				address: user.address,
-				token
-			});
-	} catch (error) {
-		console.log("Error in Login controller", error);
-		res.status(500).json({ error: "Internal Server Error" });
-	}
-}
-
-export const logout = async (req: Request, res: Response) => {
-	try {
-		const userId = req.params.id;
-
-		res.cookie("ZN-jwt", "", { maxAge: 0 });
-		await client.del(`ZN-user:${userId}`);
-
-		res.status(200).json({ message: "Logged out successfully" });
-	} catch (error) {
-		console.log("Error in Logout controller", error);
-		res.status(500).json({ error: "Internal Server Error" });
+		console.log("Error in addAdmi controller", error);
+		res.status(500).json({ error: "Internal Server error" });
 	}
 }

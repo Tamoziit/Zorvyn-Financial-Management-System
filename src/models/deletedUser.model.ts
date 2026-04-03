@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const UserSchema = new mongoose.Schema({
+const DeletedUserSchema = new mongoose.Schema({
     role: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Role",
@@ -10,7 +10,7 @@ const UserSchema = new mongoose.Schema({
     status: {
         type: String,
         enum: ["active", "inactive"],
-        default: "active",
+        default: "inactive",
         index: true
     },
     name: {
@@ -69,8 +69,18 @@ const UserSchema = new mongoose.Schema({
             type: String,
             required: true
         }
+    },
+    deletedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: true
+    },
+    deletedAt: {
+        type: Date,
+        required: true,
+        default: Date.now()
     }
 }, { timestamps: true });
 
-const User = mongoose.model("User", UserSchema);
-export default User;
+const DeletedUser = mongoose.model("DeletedUser", DeletedUserSchema);
+export default DeletedUser;

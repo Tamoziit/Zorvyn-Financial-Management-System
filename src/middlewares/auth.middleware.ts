@@ -17,7 +17,7 @@ const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
 			return;
 		}
 
-		const redisKey = `DB-user:${decodedUser.userId}`;
+		const redisKey = `ZN-user:${decodedUser.userId}`;
 		const payload = await client.get(redisKey);
 		if (!payload) {
 			res.status(401).json({ error: "Unauthorized - No User Data in Cache, Login first" });
@@ -30,7 +30,7 @@ const verifyToken = async (req: Request, res: Response, next: NextFunction) => {
 			return;
 		}
 
-		const user = await User.findById(decodedUser.userId).select("-password");
+		const user = await User.findById(decodedUser.userId).select("-password").populate("role");
 		if (!user) {
 			res.status(404).json({ error: "User Not Found!" });
 			return;

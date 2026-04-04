@@ -16,6 +16,7 @@ import testRoutes from './routes/test.routes';
 import userRoutes from './routes/user.routes';
 import accountRoutes from './routes/account.routes';
 import transactionRoutes from './routes/transactions.routes';
+import analyticsRoutes from './routes/analytics.routes';
 
 const PORT = process.env.PORT || 3000;
 
@@ -61,6 +62,7 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/account', accountRoutes);
 app.use('/api/v1/transactions', transactionRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
 
 app.listen(PORT, () => {
     console.log(`🚀 Server is running on PORT: ${PORT}`);

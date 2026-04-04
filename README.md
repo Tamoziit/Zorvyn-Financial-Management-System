@@ -19,6 +19,7 @@
    - [User Routes](#user-routes--apiv1user)
    - [Account Routes](#account-routes--apiv1account)
    - [Transaction Routes](#transaction-routes--apiv1transactions)
+   - [Analytics Routes](#analytics-routes--apiv1analytics)
    - [Test Routes](#test-routes--apiv1test)
 8. [Running Locally](#8-running-locally)
 
@@ -51,7 +52,6 @@ Express App (server.ts)
 
 **Design rationale:**
 - The application follows a **layered architecture**: routes → middlewares → controllers → models. This keeps each layer's concern isolated and swap-friendly.
-- The root `GET /` endpoint serves this README as rendered HTML using `marked` + a GitHub Markdown CSS theme, making the API self-documenting without any extra tooling.
 - `helmet` and explicit `cors` configuration protect against common HTTP vulnerabilities out of the box.
 
 ---
@@ -62,12 +62,12 @@ Express App (server.ts)
 |---|---|
 | Runtime | Node.js + TypeScript |
 | Framework | Express 5 |
-| Database | MongoDB via Mongoose 8 |
-| Cache / Session | Redis via ioredis |
+| Database | MongoDB |
+| Cache / Session | Redis via ioredis & Upstash |
 | Auth | JSON Web Tokens (jsonwebtoken) |
 | Password Hashing | bcryptjs (salt rounds: 12) |
 | Email | Resend |
-| Security | Helmet, CORS |
+| Security | Helmet, CORS, JWT & Session-cookies |
 | Logging | Morgan (`common` format) |
 | Dev tooling | ts-node, nodemon, tsx |
 
@@ -82,6 +82,7 @@ PORT=5000
 MONGODB_URI=<your MongoDB connection string>
 JWT_SECRET=<strong random secret>
 RESEND_API_KEY=<your Resend API key>
+REDIS_URL=<your_Upstah_URL>
 NODE_ENV=development   # or production
 MASTER_PASSWORD=<secure master bootstrap password>
 ```
@@ -163,9 +164,15 @@ The system defines three roles in order of ascending privilege:
 
 | Role | Middleware | Allowed By |
 |---|---|---|
-| `viewer` | `requireViewer` | viewer, analyst, admin |
+| `viewer` | `verifyToken` | viewer, analyst, admin |
 | `analyst` | `requireAnalyst` | analyst, admin |
 | `admin` | `requireAdminRole` | admin only |
+
+### Permitted Operations Overview
+
+- **viewer**: `read_record`, `view_summary`
+- **analyst**: `read_record`, `view_summary`, `view_trends`, `view_category_breakdown`
+- **admin**: `manage_users`, `create_record`, `read_record`, `update_record`, `delete_record`, `view_summary`, `view_trends`, `view_category_breakdown`
 
 RBAC middlewares always run **after** `verifyToken` (which populates `req.user`). They read `req.user.role.name` directly from the freshly-fetched MongoDB document — not from the JWT payload — so there is no risk of stale role data inside the token itself.
 
@@ -243,6 +250,22 @@ _id          ObjectId  (same as original user _id)
 role         ObjectId → Role
 status       String   default: "inactive"
 name, email, password, mobileNo, gender, address  (same as User)
+deletedBy    ObjectId → User  (admin who performed deletion)
+deletedAt    Date
+createdAt    Date  (auto)
+updatedAt    Date  (auto)
+```
+
+### DeletedTransaction
+> Soft-delete archive. When a transaction is deleted, its document is copied here before removal from the `transactions` collection. Preserves audit trail.
+```
+_id          ObjectId  (same as original transaction _id)
+accountId    ObjectId → Account
+amount       Number   required
+type         String   enum: ["income", "expense"]
+category     String   enum: ["salary","rent","luxury","essentials","loan","tax","others"]
+note         String   optional, trimmed
+createdBy    ObjectId → User
 deletedBy    ObjectId → User  (admin who performed deletion)
 deletedAt    Date
 createdAt    Date  (auto)
@@ -389,7 +412,7 @@ Creates the first (or any subsequent) admin user. Functionally identical to `/au
 
 ---
 
-### Auth Routes — `/api/v1/auth`
+### Authentication Routes — `/api/v1/auth`
 
 ---
 
@@ -537,7 +560,7 @@ Logs out the specified user by clearing their `ZN-jwt` cookie and deleting their
 
 ---
 
-### User Routes — `/api/v1/user`
+### User Management Routes — `/api/v1/user`
 
 > All routes in this group require `verifyToken` + `requireAdminRole`. Only `admin` users can manage other users.
 
@@ -734,7 +757,7 @@ Soft-deletes a user. The user document is archived in the `DeletedUser` collecti
 
 ---
 
-### Account Routes — `/api/v1/account`
+### Account Management Routes — `/api/v1/account`
 
 ---
 
@@ -893,45 +916,7 @@ Retrieves details of a single account by its `_id`. Enforces ownership for `view
 
 ---
 
-### Test Routes — `/api/v1/test`
-
-> Development/staging utility routes. Not guarded by auth — **Not to be exposed in production.**
-
----
-
-#### `POST /api/v1/test/send-email`
-
-Sends a test email via Resend to validate the email service integration.
-
-**Auth:** None
-
-**Request Body:**
-```json
-{
-  "to": "recipient@example.com",
-  "subject": "Hello from Zorvyn",
-  "message": "This is a test email body."
-}
-```
-
-**Response `200`:**
-```json
-{
-  "success": true,
-  "response": { "id": "re_abc123xyz" }
-}
-```
-
-**Error Codes:**
-
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "All fields required" }` | `to`, `subject`, or `message` missing |
-| `500` | `{ "error": "Internal Server error" }` | Resend API failure or unexpected error |
-
----
-
-### Transaction Routes — `/api/v1/transactions`
+### Transactions & Financial Record Management Routes — `/api/v1/transactions`
 
 > All endpoints require at minimum a valid `verifyToken` session. Create and admin-scoped list routes additionally require `requireAdminRole`.
 
@@ -1178,7 +1163,7 @@ Updates an existing transaction. Provides automatic and consistent account balan
 
 ---
 
-#### `DELETE /api/v1/transactions/delete-transaction/:id`
+#### `DELETE /api/v1/transactions/delete/:id`
 
 Soft-deletes a transaction, keeping full audit logs in `DeletedTransactions`, removing its payload effect on the linked `Account`, and unbinding it from the related collections. Admin only.
 
@@ -1207,6 +1192,127 @@ Soft-deletes a transaction, keeping full audit logs in `DeletedTransactions`, re
 | `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
 
 ---
+### Analytics & Dashboard Routes — `/api/v1/analytics`
+---
+
+#### `GET /api/v1/analytics/my-summary`
+Calculates and returns the total financial summary strictly for the logged-in user's own accounts.
+
+**Auth:** Any valid user token
+
+**Response `200`:**
+```json
+{
+  "totalIncome": 45000,
+  "totalExpenses": 12500.5,
+  "netBalance": 32150.2
+}
+```
+---
+#### `GET /api/v1/analytics/summary/account/:id`
+Calculates and returns the total financial summary for a single, specific account.
+For `viewer` roles, they are restricted strictly to calculations on accounts they own.
+
+**Auth:** Any valid user token
+
+**URL Params:**
+| Param | Type | Description |
+|---|---|---|
+| `id` | `string` | MongoDB `_id` of the account to query |
+
+**Response `200`:**
+```json
+{
+  "totalIncome": 10000,
+  "totalExpenses": 3000,
+  "netBalance": 7000
+}
+```
+
+**Error Codes:**
+| Status | Body | Condition |
+|---|---|---|
+| `401` | `{ "error": "..." }` | Auth failure |
+| `403` | `{ "error": "Forbidden - You can only view summary for your own account" }` | Viewer attempts to access an account they do not own |
+| `404` | `{ "error": "Account not found" }` | No account found with given ID |
+---
+#### `GET /api/v1/analytics/summary/categories`
+Calculates and returns an aggregated transaction breakdown grouped by category for analytics.
+Supports transaction filtering query parameters via `req.query`.
+
+**Auth:** `requireAnalyst` token required
+
+**Response `200`:**
+```json
+{
+  "summary": [
+    { "category": "rent", "income": 0, "expense": 1500, "total": 1500 }
+  ]
+}
+```
+---
+#### `GET /api/v1/analytics/trends`
+Calculates and returns transactional volume grouped by `yearly` or `monthly` periods.
+
+**Auth:** `requireAnalyst` token required
+
+**Query Params:**
+| Param | Type | Description |
+|---|---|---|
+| `period` | `string` | Use `"yearly"` for yearly grouping, `"monthly"` (default behavior) for monthly grouping |
+
+**Response `200`:**
+```json
+[
+  { "month": "Jan", "year": 2026, "income": 5000, "expense": 1500 }
+]
+```
+---
+#### `GET /api/v1/analytics/recent`
+Fetches the latest transactions over the last 7 days natively unless bounded by filter query parameters.
+
+**Auth:** `requireAnalyst` token required
+
+**Response `200`:** Returns array of Transaction objects.
+
+---
+### Test Routes — `/api/v1/test`
+
+> Development/staging utility routes. Not guarded by auth — **Not to be exposed in production.**
+
+---
+
+#### `POST /api/v1/test/send-email`
+
+Sends a test email via Resend to validate the email service integration.
+
+**Auth:** None
+
+**Request Body:**
+```json
+{
+  "to": "recipient@example.com",
+  "subject": "Hello from Zorvyn",
+  "message": "This is a test email body."
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "response": { "id": "re_abc123xyz" }
+}
+```
+
+**Error Codes:**
+
+| Status | Body | Condition |
+|---|---|---|
+| `400` | `{ "error": "All fields required" }` | `to`, `subject`, or `message` missing |
+| `500` | `{ "error": "Internal Server error" }` | Resend API failure or unexpected error |
+
+---
 
 ## 8. Running Locally
 
@@ -1220,13 +1326,12 @@ npm install
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env with your MongoDB URI, JWT secret, Resend API key, Master Password
-
-# 4. Ensure Redis is running locally on default port 6379
-# (or update the Redis connection in src/redis/client.ts)
+# Edit .env with your MongoDB URI, JWT secret, Resend API key, Redis URL (Upstash), Master Password
 
 # 5. Seed roles into MongoDB (viewer, analyst, admin)
-# cd seed && node seed.js  (if seed script exists)
+cd seed
+pip install -r requirements.txt
+python seedRoles.py
 
 # 6. Start the dev server
 npm run dev

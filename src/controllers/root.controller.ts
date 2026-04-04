@@ -1,7 +1,10 @@
 import { Request, Response } from "express";
 import { marked } from "marked";
+import { gfmHeadingId } from "marked-gfm-heading-id";
 import fs from "fs";
 import path from "path";
+
+marked.use(gfmHeadingId());
 
 export const serveDocs = async (req: Request, res: Response) => {
     try {

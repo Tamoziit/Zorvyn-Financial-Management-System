@@ -9,14 +9,17 @@ import morgan from "morgan";
 
 import connecToMongoDB from './db/connectToMongoDB';
 import client from './redis/client';
+import { analyticsLimiter, authLimiter, globalLimiter, masterLimiter } from './utils/rateLimiterUtils';
+
+import { serveDocs } from './controllers/root.controller';
 import masterRoutes from './routes/master.routes';
 import authRoutes from './routes/auth.routes';
-import { serveDocs } from './controllers/root.controller';
 import testRoutes from './routes/test.routes';
 import userRoutes from './routes/user.routes';
 import accountRoutes from './routes/account.routes';
 import transactionRoutes from './routes/transactions.routes';
 import analyticsRoutes from './routes/analytics.routes';
+import { docsCspOverride } from './middlewares/docsCSPOverride.middleware';
 
 const PORT = process.env.PORT || 3000;
 
@@ -48,21 +51,22 @@ app.use(morgan("common"));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use(globalLimiter);
 
-app.get("/", serveDocs);
+app.get("/", docsCspOverride, serveDocs);
 
 app.get('/api/v1', (req: Request, res: Response) => {
     res.send('Server Up & Running!');
 });
 
-app.use('/api/v1/master', masterRoutes);
+app.use('/api/v1/master', masterLimiter, masterRoutes);
 app.use('/api/v1/test', testRoutes);
 
-app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/account', accountRoutes);
 app.use('/api/v1/transactions', transactionRoutes);
-app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/analytics', analyticsLimiter, analyticsRoutes);
 
 app.listen(PORT, () => {
     console.log(`🚀 Server is running on PORT: ${PORT}`);

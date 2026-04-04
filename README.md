@@ -22,6 +22,7 @@
    - [Analytics & Dashboard Routes](#analytics--dashboard-routes--apiv1analytics)
    - [Test Routes](#test-routes--apiv1test)
 8. [Running Locally](#8-running-locally)
+9. [Author](#9-author)
 
 ---
 
@@ -35,7 +36,7 @@ Client
   ▼
 Express App (server.ts)
   │
-  ├── Global Middleware: CORS, Helmet, Morgan, Body-Parser, Cookie-Parser
+  ├── Global Middleware: CORS, Helmet, Rate Limiter, Morgan, Body-Parser, Cookie-Parser
   │
   ├── /api/v1/master  ──►  verifyMaster  ──►  Master Controller
   ├── /api/v1/auth    ──►  verifyToken? + requireAdminRole?  ──►  Auth Controller
@@ -54,6 +55,7 @@ Express App (server.ts)
 
 - The application follows a **layered architecture**: routes → middlewares → controllers → models. This keeps each layer's concern isolated and swap-friendly.
 - `helmet` and explicit `cors` configuration protect against common HTTP vulnerabilities out of the box.
+- A **rate limiter** is provisioned to restrict rapid repetitive requests to prevent abuse and brute-force attacks.
 
 ---
 
@@ -64,11 +66,12 @@ Express App (server.ts)
 | Runtime          | Node.js + TypeScript                |
 | Framework        | Express 5                           |
 | Database         | MongoDB                             |
-| Cache / Session  | Redis via ioredis & Upstash         |
+| Cache / Session  | Redis via ioredis & Upstash Redis       |
 | Auth             | JSON Web Tokens (jsonwebtoken)      |
 | Password Hashing | bcryptjs (salt rounds: 12)          |
 | Email            | Resend                              |
-| Security         | Helmet, CORS, JWT & Session-cookies |
+| Security         | Helmet, CORS, Rate Limiting, JWT & Session-cookies |
+| Rate Limiting    | express-rate-limit, rate-limit-redis, Upstash Redis |
 | Logging          | Morgan (`common` format)            |
 | Dev tooling      | ts-node, nodemon, tsx               |
 
@@ -287,7 +290,8 @@ updatedAt    Date  (auto)
 
 ## 7. API Reference
 
-**Base URL:** `http://localhost:{PORT}/api/v1`
+- **Production Base URL:** `https://zorvyn-financial-management-system.onrender.com`
+- **Development Base URL:** `http://localhost:{PORT}`
 
 **Common Request Headers:**
 
@@ -504,6 +508,9 @@ Creates a new user with the specified role. **Restricted to admin users only.** 
 | `401`  | `{ "error": "Unauthorized - Token Mismatch" }`                     | Token replaced by re-login |
 | `403`  | `{ "message": "Forbidden - Requires Admin role" }`                 | Caller is not admin        |
 | `500`  | `{ "error": "Internal Server Error" }`                             | Unexpected error           |
+
+**Welcome Email:**
+![welcome email](https://firm-emerald-aompjj2hlz.edgeone.app/image.png)
 
 ---
 
@@ -1468,3 +1475,11 @@ Visit `http://localhost:5000/` in a browser to view this documentation page rend
    { "roleName": "analyst", ... }
    → Create additional users as needed
 ```
+
+---
+
+## 9. Author
+
+**Tamojit Das**
+- GitHub: [@Tamoziit](https://github.com/Tamoziit)
+- Email: [tamojitdas181007@gmail.com](mailto:tamojitdas181007@gmail.com)

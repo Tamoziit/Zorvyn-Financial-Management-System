@@ -52,6 +52,7 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(globalLimiter);
+app.set('trust proxy', 1); // trust 1st proxy hop
 
 app.get("/", docsCspOverride, serveDocs);
 

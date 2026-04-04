@@ -15,11 +15,11 @@
 7. [API Reference](#7-api-reference)
    - [Health Check](#health-check)
    - [Master Routes](#master-routes--apiv1master)
-   - [Auth Routes](#auth-routes--apiv1auth)
-   - [User Routes](#user-routes--apiv1user)
-   - [Account Routes](#account-routes--apiv1account)
-   - [Transaction Routes](#transaction-routes--apiv1transactions)
-   - [Analytics Routes](#analytics-routes--apiv1analytics)
+   - [Authentication Routes](#authentication-routes--apiv1auth)
+   - [User Management Routes](#user-management-routes--apiv1user)
+   - [Account Management Routes](#account-management-routes--apiv1account)
+   - [Transactions & Financial Record Management Routes](#transactions--financial-record-management-routes--apiv1transactions)
+   - [Analytics & Dashboard Routes](#analytics--dashboard-routes--apiv1analytics)
    - [Test Routes](#test-routes--apiv1test)
 8. [Running Locally](#8-running-locally)
 
@@ -51,6 +51,7 @@ Express App (server.ts)
 ```
 
 **Design rationale:**
+
 - The application follows a **layered architecture**: routes → middlewares → controllers → models. This keeps each layer's concern isolated and swap-friendly.
 - `helmet` and explicit `cors` configuration protect against common HTTP vulnerabilities out of the box.
 
@@ -58,18 +59,18 @@ Express App (server.ts)
 
 ## 2. Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js + TypeScript |
-| Framework | Express 5 |
-| Database | MongoDB |
-| Cache / Session | Redis via ioredis & Upstash |
-| Auth | JSON Web Tokens (jsonwebtoken) |
-| Password Hashing | bcryptjs (salt rounds: 12) |
-| Email | Resend |
-| Security | Helmet, CORS, JWT & Session-cookies |
-| Logging | Morgan (`common` format) |
-| Dev tooling | ts-node, nodemon, tsx |
+| Layer            | Technology                          |
+| ---------------- | ----------------------------------- |
+| Runtime          | Node.js + TypeScript                |
+| Framework        | Express 5                           |
+| Database         | MongoDB                             |
+| Cache / Session  | Redis via ioredis & Upstash         |
+| Auth             | JSON Web Tokens (jsonwebtoken)      |
+| Password Hashing | bcryptjs (salt rounds: 12)          |
+| Email            | Resend                              |
+| Security         | Helmet, CORS, JWT & Session-cookies |
+| Logging          | Morgan (`common` format)            |
+| Dev tooling      | ts-node, nodemon, tsx               |
 
 ---
 
@@ -82,7 +83,7 @@ PORT=5000
 MONGODB_URI=<your MongoDB connection string>
 JWT_SECRET=<strong random secret>
 RESEND_API_KEY=<your Resend API key>
-REDIS_URL=<your_Upstah_URL>
+REDIS_URL=<your_Upstash_URL>
 NODE_ENV=development   # or production
 MASTER_PASSWORD=<secure master bootstrap password>
 ```
@@ -144,12 +145,14 @@ Incoming Request
 Storing the active token in Redis allows instant session invalidation on logout (`DEL "ZN-user:{userId}"`) without waiting for JWT expiry. It also naturally solves the single-device session constraint: a new login overwrites the Redis key, making the old token fail the token-mismatch check even though the JWT itself is still cryptographically valid.
 
 **Why dual delivery (cookie + header)?**
+
 - The `ZN-jwt` **HttpOnly cookie** protects browser-based clients from XSS token theft.
 - The `Authorization` **response header** + body `token` field support API clients (mobile apps, Postman) that manage tokens manually.
 
 ### Role Update Without Re-Login
 
 When an admin updates a user's role via `PATCH /api/v1/user/update-user-state/:id`, the controller:
+
 1. Updates the `role` field in MongoDB.
 2. Fetches the live Redis payload for that user.
 3. Patches `payload.role` in-place and re-writes it to Redis (resetting the 30-day TTL).
@@ -162,11 +165,11 @@ This means the role change takes effect **on the user's next request** without f
 
 The system defines three roles in order of ascending privilege:
 
-| Role | Middleware | Allowed By |
-|---|---|---|
-| `viewer` | `verifyToken` | viewer, analyst, admin |
-| `analyst` | `requireAnalyst` | analyst, admin |
-| `admin` | `requireAdminRole` | admin only |
+| Role      | Middleware         | Allowed By             |
+| --------- | ------------------ | ---------------------- |
+| `viewer`  | `verifyToken`      | viewer, analyst, admin |
+| `analyst` | `requireAnalyst`   | analyst, admin         |
+| `admin`   | `requireAdminRole` | admin only             |
 
 ### Permitted Operations Overview
 
@@ -185,6 +188,7 @@ The `Role` document stores a `permissions[]` array (see [Schemas](#6-data-schema
 ## 6. Data Schemas
 
 ### User
+
 ```
 _id          ObjectId
 role         ObjectId → Role
@@ -207,6 +211,7 @@ updatedAt    Date  (auto)
 ```
 
 ### Role
+
 ```
 _id          ObjectId
 name         String  enum: ["viewer", "analyst", "admin"], unique
@@ -219,6 +224,7 @@ updatedAt    Date  (auto)
 ```
 
 ### Account
+
 ```
 _id          ObjectId
 userId       ObjectId → User
@@ -231,6 +237,7 @@ updatedAt    Date  (auto)
 ```
 
 ### Transaction
+
 ```
 _id          ObjectId
 accountId    ObjectId → Account
@@ -244,7 +251,9 @@ updatedAt    Date  (auto)
 ```
 
 ### DeletedUser
+
 > Soft-delete archive. When a user is deleted, their document is copied here before removal from the `users` collection. Preserves audit trail.
+
 ```
 _id          ObjectId  (same as original user _id)
 role         ObjectId → Role
@@ -257,7 +266,9 @@ updatedAt    Date  (auto)
 ```
 
 ### DeletedTransaction
+
 > Soft-delete archive. When a transaction is deleted, its document is copied here before removal from the `transactions` collection. Preserves audit trail.
+
 ```
 _id          ObjectId  (same as original transaction _id)
 accountId    ObjectId → Account
@@ -280,32 +291,35 @@ updatedAt    Date  (auto)
 
 **Common Request Headers:**
 
-| Header | Value | Required On |
-|---|---|---|
-| `Content-Type` | `application/json` | All POST / PATCH |
-| `Authorization` | `Bearer <token>` | All protected routes |
+| Header          | Value              | Required On          |
+| --------------- | ------------------ | -------------------- |
+| `Content-Type`  | `application/json` | All POST / PATCH     |
+| `Authorization` | `Bearer <token>`   | All protected routes |
 
 **Common Error Responses:**
 
-| Status | Body | Meaning |
-|---|---|---|
-| `400` | `{ "error": "..." }` | Validation or business logic failure |
-| `401` | `{ "error": "..." }` | Missing / invalid / expired token |
-| `403` | `{ "message": "..." }` | Authenticated but insufficient role |
-| `404` | `{ "error": "User Not Found!" }` | Resource not found |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected server error |
+| Status | Body                                   | Meaning                              |
+| ------ | -------------------------------------- | ------------------------------------ |
+| `400`  | `{ "error": "..." }`                   | Validation or business logic failure |
+| `401`  | `{ "error": "..." }`                   | Missing / invalid / expired token    |
+| `403`  | `{ "message": "..." }`                 | Authenticated but insufficient role  |
+| `404`  | `{ "error": "User Not Found!" }`       | Resource not found                   |
+| `500`  | `{ "error": "Internal Server Error" }` | Unexpected server error              |
 
 ---
 
 ### Health Check
 
 #### `GET /`
+
 Renders this README as a styled HTML page (served by `root.controller.ts` via `marked`).
 
 #### `GET /api/v1`
+
 Simple liveness probe.
 
 **Response `200`:**
+
 ```
 Server Up & Running!
 ```
@@ -325,6 +339,7 @@ Authenticates with the master password and returns a short-lived JWT to be used 
 **Auth:** None
 
 **Request Body:**
+
 ```json
 {
   "password": "your_master_password"
@@ -332,17 +347,19 @@ Authenticates with the master password and returns a short-lived JWT to be used 
 ```
 
 **Response `200`:**
+
 ```
 "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
+
 > Raw JWT string (not wrapped in an object). This token embeds `{ masterPassword }` and expires in **5 hours**.
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "Invalid Admin Credentials" }` | Wrong or missing password |
-| `500` | `{ "error": "Internal Server error" }` | Unexpected error |
+| Status | Body                                       | Condition                 |
+| ------ | ------------------------------------------ | ------------------------- |
+| `401`  | `{ "error": "Invalid Admin Credentials" }` | Wrong or missing password |
+| `500`  | `{ "error": "Internal Server error" }`     | Unexpected error          |
 
 ---
 
@@ -353,6 +370,7 @@ Creates the first (or any subsequent) admin user. Functionally identical to `/au
 **Auth:** `Authorization: Bearer <master_token>`
 
 **Request Body:**
+
 ```json
 {
   "name": "Alice Admin",
@@ -371,6 +389,7 @@ Creates the first (or any subsequent) admin user. Functionally identical to `/au
 ```
 
 **Response `201`:**
+
 ```json
 {
   "_id": "663f1a2b4c5d6e7f8a9b0c1d",
@@ -396,19 +415,19 @@ Creates the first (or any subsequent) admin user. Functionally identical to `/au
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "All fields are required" }` | Any required field missing |
-| `400` | `{ "error": "Password should be at least 6 characters long" }` | Short password |
-| `400` | `{ "error": "Enter a valid Mobile Number" }` | mobileNo ≠ 10 digits |
-| `400` | `{ "error": "Enter a gender" }` | gender not M / F / O |
-| `400` | `{ "error": "A user with this mobile no. already exists..." }` | Duplicate mobileNo |
-| `400` | `{ "error": "A user with this Email. already exists..." }` | Duplicate email |
-| `400` | `{ "error": "Error in fetching Admin role" }` | `admin` role not seeded in DB |
-| `401` | `{ "message": "Unauthorized: No token provided" }` | Missing Authorization header |
-| `401` | `{ "message": "Unauthorized: Invalid token" }` | Malformed / expired master JWT |
-| `403` | `{ "message": "Forbidden: Invalid admin password" }` | masterPassword mismatch in token |
-| `500` | `{ "error": "Internal Server error" }` | Unexpected error |
+| Status | Body                                                           | Condition                        |
+| ------ | -------------------------------------------------------------- | -------------------------------- |
+| `400`  | `{ "error": "All fields are required" }`                       | Any required field missing       |
+| `400`  | `{ "error": "Password should be at least 6 characters long" }` | Short password                   |
+| `400`  | `{ "error": "Enter a valid Mobile Number" }`                   | mobileNo ≠ 10 digits             |
+| `400`  | `{ "error": "Enter a gender" }`                                | gender not M / F / O             |
+| `400`  | `{ "error": "A user with this mobile no. already exists..." }` | Duplicate mobileNo               |
+| `400`  | `{ "error": "A user with this Email. already exists..." }`     | Duplicate email                  |
+| `400`  | `{ "error": "Error in fetching Admin role" }`                  | `admin` role not seeded in DB    |
+| `401`  | `{ "message": "Unauthorized: No token provided" }`             | Missing Authorization header     |
+| `401`  | `{ "message": "Unauthorized: Invalid token" }`                 | Malformed / expired master JWT   |
+| `403`  | `{ "message": "Forbidden: Invalid admin password" }`           | masterPassword mismatch in token |
+| `500`  | `{ "error": "Internal Server error" }`                         | Unexpected error                 |
 
 ---
 
@@ -423,6 +442,7 @@ Creates a new user with the specified role. **Restricted to admin users only.** 
 **Auth:** `Authorization: Bearer <admin_user_token>` → `verifyToken` + `requireAdminRole`
 
 **Request Body:**
+
 ```json
 {
   "roleName": "analyst",
@@ -444,6 +464,7 @@ Creates a new user with the specified role. **Restricted to admin users only.** 
 > `roleName` must be one of: `"viewer"`, `"analyst"`, `"admin"`
 
 **Response `201`:**
+
 ```json
 {
   "_id": "663f1a2b4c5d6e7f8a9b0c2e",
@@ -467,22 +488,22 @@ Creates a new user with the specified role. **Restricted to admin users only.** 
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "All fields are required" }` | Any required field missing |
-| `400` | `{ "error": "Password should be at least 6 characters long" }` | Short password |
-| `400` | `{ "error": "Name should be at least 2 characters long" }` | Short name |
-| `400` | `{ "error": "Enter a valid Mobile Number" }` | mobileNo ≠ 10 digits |
-| `400` | `{ "error": "Enter a gender" }` | gender not M / F / O |
-| `400` | `{ "error": "A user with this mobile no. already exists..." }` | Duplicate mobileNo |
-| `400` | `{ "error": "A user with this Email. already exists..." }` | Duplicate email |
-| `400` | `{ "error": "Error in fetching user role" }` | roleName not found in DB |
-| `401` | `{ "error": "Unauthorized - No Token Provided" }` | Missing Bearer token |
-| `401` | `{ "error": "Unauthorized - Invalid Token" }` | JWT verification failed |
-| `401` | `{ "error": "Unauthorized - No User Data in Cache, Login first" }` | Redis key missing |
-| `401` | `{ "error": "Unauthorized - Token Mismatch" }` | Token replaced by re-login |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Caller is not admin |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                               | Condition                  |
+| ------ | ------------------------------------------------------------------ | -------------------------- |
+| `400`  | `{ "error": "All fields are required" }`                           | Any required field missing |
+| `400`  | `{ "error": "Password should be at least 6 characters long" }`     | Short password             |
+| `400`  | `{ "error": "Name should be at least 2 characters long" }`         | Short name                 |
+| `400`  | `{ "error": "Enter a valid Mobile Number" }`                       | mobileNo ≠ 10 digits       |
+| `400`  | `{ "error": "Enter a gender" }`                                    | gender not M / F / O       |
+| `400`  | `{ "error": "A user with this mobile no. already exists..." }`     | Duplicate mobileNo         |
+| `400`  | `{ "error": "A user with this Email. already exists..." }`         | Duplicate email            |
+| `400`  | `{ "error": "Error in fetching user role" }`                       | roleName not found in DB   |
+| `401`  | `{ "error": "Unauthorized - No Token Provided" }`                  | Missing Bearer token       |
+| `401`  | `{ "error": "Unauthorized - Invalid Token" }`                      | JWT verification failed    |
+| `401`  | `{ "error": "Unauthorized - No User Data in Cache, Login first" }` | Redis key missing          |
+| `401`  | `{ "error": "Unauthorized - Token Mismatch" }`                     | Token replaced by re-login |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }`                 | Caller is not admin        |
+| `500`  | `{ "error": "Internal Server Error" }`                             | Unexpected error           |
 
 ---
 
@@ -493,6 +514,7 @@ Authenticates a user by email and password. Issues a new JWT, repopulates the Re
 **Auth:** None
 
 **Request Body:**
+
 ```json
 {
   "email": "bob@zorvyn.com",
@@ -501,6 +523,7 @@ Authenticates a user by email and password. Issues a new JWT, repopulates the Re
 ```
 
 **Response `201`:**
+
 ```json
 {
   "_id": "663f1a2b4c5d6e7f8a9b0c2e",
@@ -509,7 +532,7 @@ Authenticates a user by email and password. Issues a new JWT, repopulates the Re
   "email": "bob@zorvyn.com",
   "mobileNo": "9123456780",
   "gender": "M",
-  "address": { "..." : "..." },
+  "address": { "...": "..." },
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
@@ -518,12 +541,12 @@ Authenticates a user by email and password. Issues a new JWT, repopulates the Re
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find User" }` | Email not registered |
-| `400` | `{ "error": "Invalid Login Credentials" }` | Password mismatch |
-| `400` | `{ "error": "Error in fetching user role" }` | Role reference broken |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                         | Condition             |
+| ------ | -------------------------------------------- | --------------------- |
+| `400`  | `{ "error": "Cannot find User" }`            | Email not registered  |
+| `400`  | `{ "error": "Invalid Login Credentials" }`   | Password mismatch     |
+| `400`  | `{ "error": "Error in fetching user role" }` | Role reference broken |
+| `500`  | `{ "error": "Internal Server Error" }`       | Unexpected error      |
 
 ---
 
@@ -535,13 +558,14 @@ Logs out the specified user by clearing their `ZN-jwt` cookie and deleting their
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user to log out |
+| Param | Type     | Description                          |
+| ----- | -------- | ------------------------------------ |
+| `id`  | `string` | MongoDB `_id` of the user to log out |
 
 **Request Body:** None
 
 **Response `200`:**
+
 ```json
 {
   "message": "Logged out successfully"
@@ -550,13 +574,13 @@ Logs out the specified user by clearing their `ZN-jwt` cookie and deleting their
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "Unauthorized - No Token Provided" }` | Missing Bearer token |
-| `401` | `{ "error": "Unauthorized - Invalid Token" }` | JWT verification failed |
-| `401` | `{ "error": "Unauthorized - No User Data in Cache, Login first" }` | Already logged out |
-| `401` | `{ "error": "Unauthorized - Token Mismatch" }` | Stale token |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                               | Condition               |
+| ------ | ------------------------------------------------------------------ | ----------------------- |
+| `401`  | `{ "error": "Unauthorized - No Token Provided" }`                  | Missing Bearer token    |
+| `401`  | `{ "error": "Unauthorized - Invalid Token" }`                      | JWT verification failed |
+| `401`  | `{ "error": "Unauthorized - No User Data in Cache, Login first" }` | Already logged out      |
+| `401`  | `{ "error": "Unauthorized - Token Mismatch" }`                     | Stale token             |
+| `500`  | `{ "error": "Internal Server Error" }`                             | Unexpected error        |
 
 ---
 
@@ -574,14 +598,15 @@ Retrieves a paginated list of all users. Supports optional filtering by `status`
 
 **Query Params:**
 
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `page` | number | `1` | Page number |
-| `limit` | number | `10` | Results per page |
-| `status` | string | — | Filter by `"active"` or `"inactive"` |
-| `role` | string | — | Filter by role name (`"admin"`, `"analyst"`, `"viewer"`) |
+| Param    | Type   | Default | Description                                              |
+| -------- | ------ | ------- | -------------------------------------------------------- |
+| `page`   | number | `1`     | Page number                                              |
+| `limit`  | number | `10`    | Results per page                                         |
+| `status` | string | —       | Filter by `"active"` or `"inactive"`                     |
+| `role`   | string | —       | Filter by role name (`"admin"`, `"analyst"`, `"viewer"`) |
 
 **Response `200`:**
+
 ```json
 {
   "users": [
@@ -593,7 +618,7 @@ Retrieves a paginated list of all users. Supports optional filtering by `status`
       "email": "bob@zorvyn.com",
       "mobileNo": "9123456780",
       "gender": "M",
-      "address": { "..." : "..." },
+      "address": { "...": "..." },
       "createdAt": "2024-01-15T10:30:00.000Z",
       "updatedAt": "2024-01-15T10:30:00.000Z"
     }
@@ -608,11 +633,11 @@ Retrieves a paginated list of all users. Supports optional filtering by `status`
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "..." }` | Auth failure (see verifyToken) |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition                      |
+| ------ | -------------------------------------------------- | ------------------------------ |
+| `401`  | `{ "error": "..." }`                               | Auth failure (see verifyToken) |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller               |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error               |
 
 ---
 
@@ -624,11 +649,12 @@ Retrieves a single user document by their MongoDB `_id`.
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user |
+| Param | Type     | Description               |
+| ----- | -------- | ------------------------- |
+| `id`  | `string` | MongoDB `_id` of the user |
 
 **Response `200`:**
+
 ```json
 {
   "_id": "663f1a2b4c5d6e7f8a9b0c2e",
@@ -638,7 +664,7 @@ Retrieves a single user document by their MongoDB `_id`.
   "email": "bob@zorvyn.com",
   "mobileNo": "9123456780",
   "gender": "M",
-  "address": { "..." : "..." },
+  "address": { "...": "..." },
   "createdAt": "2024-01-15T10:30:00.000Z",
   "updatedAt": "2024-01-15T10:30:00.000Z"
 }
@@ -646,12 +672,12 @@ Retrieves a single user document by their MongoDB `_id`.
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "User not found" }` | No user with given ID |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition             |
+| ------ | -------------------------------------------------- | --------------------- |
+| `400`  | `{ "error": "User not found" }`                    | No user with given ID |
+| `401`  | `{ "error": "..." }`                               | Auth failure          |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller      |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error      |
 
 ---
 
@@ -663,11 +689,12 @@ Updates a user's `role` and/or `status`. If the role is changed, the user's acti
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user to update |
+| Param | Type     | Description                         |
+| ----- | -------- | ----------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the user to update |
 
 **Request Body** (all fields optional, at least one required):
+
 ```json
 {
   "roleName": "viewer",
@@ -679,6 +706,7 @@ Updates a user's `role` and/or `status`. If the role is changed, the user's acti
 > `status` must be one of: `"active"`, `"inactive"`
 
 **Response `200`:**
+
 ```json
 {
   "message": "User updated successfully",
@@ -690,7 +718,7 @@ Updates a user's `role` and/or `status`. If the role is changed, the user's acti
     "email": "bob@zorvyn.com",
     "mobileNo": "9123456780",
     "gender": "M",
-    "address": { "..." : "..." },
+    "address": { "...": "..." },
     "createdAt": "2024-01-15T10:30:00.000Z",
     "updatedAt": "2024-04-03T12:00:00.000Z"
   }
@@ -699,13 +727,13 @@ Updates a user's `role` and/or `status`. If the role is changed, the user's acti
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Role not found" }` | roleName not in DB |
-| `400` | `{ "error": "User not found" }` | No user with given ID |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition             |
+| ------ | -------------------------------------------------- | --------------------- |
+| `400`  | `{ "error": "Role not found" }`                    | roleName not in DB    |
+| `400`  | `{ "error": "User not found" }`                    | No user with given ID |
+| `401`  | `{ "error": "..." }`                               | Auth failure          |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller      |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error      |
 
 ---
 
@@ -717,13 +745,14 @@ Soft-deletes a user. The user document is archived in the `DeletedUser` collecti
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user to delete |
+| Param | Type     | Description                         |
+| ----- | -------- | ----------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the user to delete |
 
 **Request Body:** None
 
 **Response `200`:**
+
 ```json
 {
   "message": "User deleted successfully",
@@ -735,7 +764,7 @@ Soft-deletes a user. The user document is archived in the `DeletedUser` collecti
     "email": "bob@zorvyn.com",
     "mobileNo": "9123456780",
     "gender": "M",
-    "address": { "..." : "..." },
+    "address": { "...": "..." },
     "deletedBy": "663f1a2b4c5d6e7f8a9b0c1d",
     "deletedAt": "2024-04-03T12:05:00.000Z"
   }
@@ -746,14 +775,14 @@ Soft-deletes a user. The user document is archived in the `DeletedUser` collecti
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "User ID is required" }` | Missing `:id` param |
-| `400` | `{ "error": "User not found" }` | No user with given ID |
-| `400` | `{ "error": "Error in deleting user" }` | Archive document creation failure |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition                         |
+| ------ | -------------------------------------------------- | --------------------------------- |
+| `400`  | `{ "error": "User ID is required" }`               | Missing `:id` param               |
+| `400`  | `{ "error": "User not found" }`                    | No user with given ID             |
+| `400`  | `{ "error": "Error in deleting user" }`            | Archive document creation failure |
+| `401`  | `{ "error": "..." }`                               | Auth failure                      |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller                  |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error                  |
 
 ---
 
@@ -769,11 +798,12 @@ Creates a new bank account for the specified user. Account number (12 digits) an
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user to create an account for |
+| Param | Type     | Description                                        |
+| ----- | -------- | -------------------------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the user to create an account for |
 
 **Request Body** (optional):
+
 ```json
 {
   "balance": 5000
@@ -783,6 +813,7 @@ Creates a new bank account for the specified user. Account number (12 digits) an
 > If `balance` is omitted, defaults to `2000`.
 
 **Response `201`:**
+
 ```json
 {
   "_id": "663f2b3c4d5e6f7a8b9c0d1e",
@@ -798,13 +829,13 @@ Creates a new bank account for the specified user. Account number (12 digits) an
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "User not found" }` | No user with given ID |
-| `400` | `{ "error": "Error in creating Account" }` | Account document save failure |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition                     |
+| ------ | -------------------------------------------------- | ----------------------------- |
+| `400`  | `{ "error": "User not found" }`                    | No user with given ID         |
+| `400`  | `{ "error": "Error in creating Account" }`         | Account document save failure |
+| `401`  | `{ "error": "..." }`                               | Auth failure                  |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller              |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error              |
 
 ---
 
@@ -816,11 +847,12 @@ Retrieves all accounts belonging to a specific user. Admin only.
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the user whose accounts to fetch |
+| Param | Type     | Description                                       |
+| ----- | -------- | ------------------------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the user whose accounts to fetch |
 
 **Response `200`:**
+
 ```json
 [
   {
@@ -838,12 +870,12 @@ Retrieves all accounts belonging to a specific user. Admin only.
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find Accounts for this User ID" }` | No accounts found |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                   | Condition         |
+| ------ | ------------------------------------------------------ | ----------------- |
+| `400`  | `{ "error": "Cannot find Accounts for this User ID" }` | No accounts found |
+| `401`  | `{ "error": "..." }`                                   | Auth failure      |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }`     | Non-admin caller  |
+| `500`  | `{ "error": "Internal Server Error" }`                 | Unexpected error  |
 
 ---
 
@@ -854,6 +886,7 @@ Retrieves all accounts belonging to the currently authenticated user (derived fr
 **Auth:** Any valid user token (`verifyToken` only, no RBAC gate)
 
 **Response `200`:**
+
 ```json
 [
   {
@@ -871,11 +904,11 @@ Retrieves all accounts belonging to the currently authenticated user (derived fr
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find Accounts. Try again later." }` | Unexpected query failure |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                    | Condition                |
+| ------ | ------------------------------------------------------- | ------------------------ |
+| `400`  | `{ "error": "Cannot find Accounts. Try again later." }` | Unexpected query failure |
+| `401`  | `{ "error": "..." }`                                    | Auth failure             |
+| `500`  | `{ "error": "Internal Server Error" }`                  | Unexpected error         |
 
 ---
 
@@ -887,11 +920,12 @@ Retrieves details of a single account by its `_id`. Enforces ownership for `view
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the account |
+| Param | Type     | Description                  |
+| ----- | -------- | ---------------------------- |
+| `id`  | `string` | MongoDB `_id` of the account |
 
 **Response `200`:**
+
 ```json
 {
   "_id": "663f2b3c4d5e6f7a8b9c0d1e",
@@ -907,12 +941,12 @@ Retrieves details of a single account by its `_id`. Enforces ownership for `view
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find Account with this ID" }` | No account with given ID |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "error": "Forbidden - You are not allowed to view any other account other than yours" }` | viewer/analyst accessing another user's account |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                                                        | Condition                                       |
+| ------ | ------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `400`  | `{ "error": "Cannot find Account with this ID" }`                                           | No account with given ID                        |
+| `401`  | `{ "error": "..." }`                                                                        | Auth failure                                    |
+| `403`  | `{ "error": "Forbidden - You are not allowed to view any other account other than yours" }` | viewer/analyst accessing another user's account |
+| `500`  | `{ "error": "Internal Server Error" }`                                                      | Unexpected error                                |
 
 ---
 
@@ -922,14 +956,14 @@ Retrieves details of a single account by its `_id`. Enforces ownership for `view
 
 **Shared filter query params** (available on all three list endpoints):
 
-| Param | Type | Example | Description |
-|---|---|---|---|
-| `page` | number | `1` | Page number (default: `1`) |
-| `limit` | number | `10` | Results per page (default: `10`) |
-| `type` | string | `expense` | Filter by `income` or `expense` |
-| `category` | string | `rent` | Filter by category enum value |
-| `startDate` | string | `2026-01-01` | Include records on or after this date (ISO 8601, UTC) |
-| `endDate` | string | `2026-04-01` | Include records on or before end of this date (ISO 8601, UTC) |
+| Param       | Type   | Example      | Description                                                   |
+| ----------- | ------ | ------------ | ------------------------------------------------------------- |
+| `page`      | number | `1`          | Page number (default: `1`)                                    |
+| `limit`     | number | `10`         | Results per page (default: `10`)                              |
+| `type`      | string | `expense`    | Filter by `income` or `expense`                               |
+| `category`  | string | `rent`       | Filter by category enum value                                 |
+| `startDate` | string | `2026-01-01` | Include records on or after this date (ISO 8601, UTC)         |
+| `endDate`   | string | `2026-04-01` | Include records on or before end of this date (ISO 8601, UTC) |
 
 ---
 
@@ -941,11 +975,12 @@ Creates a new transaction record against an account. Updates the account balance
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the **account** to record the transaction on |
+| Param | Type     | Description                                                   |
+| ----- | -------- | ------------------------------------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the **account** to record the transaction on |
 
 **Request Body:**
+
 ```json
 {
   "amount": 1500,
@@ -960,6 +995,7 @@ Creates a new transaction record against an account. Updates the account balance
 > `note`: optional free-text annotation
 
 **Response `201`:**
+
 ```json
 {
   "_id": "663faa1b2c3d4e5f6a7b8c9d",
@@ -976,17 +1012,17 @@ Creates a new transaction record against an account. Updates the account balance
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find account with this ID" }` | Account not found |
-| `400` | `{ "error": "All fields are required" }` | `amount`, `type`, or `category` missing |
-| `400` | `{ "error": "Enter a valid Transaction amount" }` | `amount` ≤ 0 |
-| `400` | `{ "error": "Enter a valid Transaction type" }` | `type` not `income`/`expense` |
-| `400` | `{ "error": "Enter a valid Transaction category" }` | Unknown category value |
-| `400` | `{ "error": "Insufficient Balance" }` | Expense exceeds account balance |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                | Condition                               |
+| ------ | --------------------------------------------------- | --------------------------------------- |
+| `400`  | `{ "error": "Cannot find account with this ID" }`   | Account not found                       |
+| `400`  | `{ "error": "All fields are required" }`            | `amount`, `type`, or `category` missing |
+| `400`  | `{ "error": "Enter a valid Transaction amount" }`   | `amount` ≤ 0                            |
+| `400`  | `{ "error": "Enter a valid Transaction type" }`     | `type` not `income`/`expense`           |
+| `400`  | `{ "error": "Enter a valid Transaction category" }` | Unknown category value                  |
+| `400`  | `{ "error": "Insufficient Balance" }`               | Expense exceeds account balance         |
+| `401`  | `{ "error": "..." }`                                | Auth failure                            |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }`  | Non-admin caller                        |
+| `500`  | `{ "error": "Internal Server Error" }`              | Unexpected error                        |
 
 ---
 
@@ -999,17 +1035,22 @@ Returns the paginated, filterable list of **all transactions belonging to the au
 **Query Params:** See shared filter params table above.
 
 **Example:**
+
 ```
 GET /api/v1/transactions/my-transactions?type=expense&category=rent&startDate=2026-01-01&endDate=2026-04-01&page=1&limit=5
 ```
 
 **Response `200`:**
+
 ```json
 {
   "transactions": [
     {
       "_id": "663faa1b2c3d4e5f6a7b8c9d",
-      "accountId": { "_id": "663f2b3c4d5e6f7a8b9c0d1e", "userId": "663f1a2b4c5d6e7f8a9b0c2e" },
+      "accountId": {
+        "_id": "663f2b3c4d5e6f7a8b9c0d1e",
+        "userId": "663f1a2b4c5d6e7f8a9b0c2e"
+      },
       "amount": 1500,
       "type": "expense",
       "category": "rent",
@@ -1029,10 +1070,10 @@ GET /api/v1/transactions/my-transactions?type=expense&category=rent&startDate=20
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "..." }` | Auth failure |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                   | Condition        |
+| ------ | -------------------------------------- | ---------------- |
+| `401`  | `{ "error": "..." }`                   | Auth failure     |
+| `500`  | `{ "error": "Internal Server Error" }` | Unexpected error |
 
 ---
 
@@ -1044,9 +1085,9 @@ Returns the paginated, filterable transaction history of a **specific user** (id
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the **user** whose transactions to fetch |
+| Param | Type     | Description                                               |
+| ----- | -------- | --------------------------------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the **user** whose transactions to fetch |
 
 **Query Params:** See shared filter params table above.
 
@@ -1054,11 +1095,11 @@ Returns the paginated, filterable transaction history of a **specific user** (id
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition        |
+| ------ | -------------------------------------------------- | ---------------- |
+| `401`  | `{ "error": "..." }`                               | Auth failure     |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error |
 
 ---
 
@@ -1074,11 +1115,11 @@ Returns a paginated, filterable list of **every transaction in the system**. Adm
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                               | Condition        |
+| ------ | -------------------------------------------------- | ---------------- |
+| `401`  | `{ "error": "..." }`                               | Auth failure     |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| `500`  | `{ "error": "Internal Server Error" }`             | Unexpected error |
 
 ---
 
@@ -1090,15 +1131,19 @@ Returns a **single transaction** by its `_id`. `viewer` and `analyst` roles can 
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the transaction |
+| Param | Type     | Description                      |
+| ----- | -------- | -------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the transaction |
 
 **Response `200`:**
+
 ```json
 {
   "_id": "663faa1b2c3d4e5f6a7b8c9d",
-  "accountId": { "_id": "663f2b3c4d5e6f7a8b9c0d1e", "userId": "663f1a2b4c5d6e7f8a9b0c2e" },
+  "accountId": {
+    "_id": "663f2b3c4d5e6f7a8b9c0d1e",
+    "userId": "663f1a2b4c5d6e7f8a9b0c2e"
+  },
   "amount": 1500,
   "type": "expense",
   "category": "rent",
@@ -1111,12 +1156,12 @@ Returns a **single transaction** by its `_id`. `viewer` and `analyst` roles can 
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Cannot find Transaction with this ID" }` | No transaction with given ID |
-| `401` | `{ "error": "..." }` | Auth failure |
-| `403` | `{ "error": "Forbidden - You are not allowed to view any other transaction other than yours" }` | viewer/analyst accessing another user's transaction |
-| `500` | `{ "error": "Internal Server Error" }` | Unexpected error |
+| Status | Body                                                                                            | Condition                                           |
+| ------ | ----------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `400`  | `{ "error": "Cannot find Transaction with this ID" }`                                           | No transaction with given ID                        |
+| `401`  | `{ "error": "..." }`                                                                            | Auth failure                                        |
+| `403`  | `{ "error": "Forbidden - You are not allowed to view any other transaction other than yours" }` | viewer/analyst accessing another user's transaction |
+| `500`  | `{ "error": "Internal Server Error" }`                                                          | Unexpected error                                    |
 
 ---
 
@@ -1128,11 +1173,12 @@ Updates an existing transaction. Provides automatic and consistent account balan
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the transaction |
+| Param | Type     | Description                      |
+| ----- | -------- | -------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the transaction |
 
 **Request Body** (all fields optional):
+
 ```json
 {
   "accountId": "663f2b3c4d5e6f7a8b9c0d1e",
@@ -1144,6 +1190,7 @@ Updates an existing transaction. Provides automatic and consistent account balan
 ```
 
 **Response `200`:**
+
 ```json
 {
   "message": "Transaction updated successfully",
@@ -1153,13 +1200,13 @@ Updates an existing transaction. Provides automatic and consistent account balan
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Transaction not found" }` | No transaction with given ID |
-| `400` | `{ "error": "Original account not found" }` | Missing underlying source account |
-| `400` | `{ "error": "Reverting this transaction would cause a negative balance on the original account" }` | Changing income into expense causes deficit |
-| `400` | `{ "error": "Insufficient Balance" }` | Updating expense to larger amount exceeds balance |
-| `403` | `{ "error": "Cannot move a transaction to another user's account" }` | Inter-account migration targets another user |
+| Status | Body                                                                                               | Condition                                         |
+| ------ | -------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `400`  | `{ "error": "Transaction not found" }`                                                             | No transaction with given ID                      |
+| `400`  | `{ "error": "Original account not found" }`                                                        | Missing underlying source account                 |
+| `400`  | `{ "error": "Reverting this transaction would cause a negative balance on the original account" }` | Changing income into expense causes deficit       |
+| `400`  | `{ "error": "Insufficient Balance" }`                                                              | Updating expense to larger amount exceeds balance |
+| `403`  | `{ "error": "Cannot move a transaction to another user's account" }`                               | Inter-account migration targets another user      |
 
 ---
 
@@ -1171,11 +1218,12 @@ Soft-deletes a transaction, keeping full audit logs in `DeletedTransactions`, re
 
 **URL Params:**
 
-| Param | Type | Description |
-|---|---|---|
-| `id` | `string` | MongoDB `_id` of the transaction |
+| Param | Type     | Description                      |
+| ----- | -------- | -------------------------------- |
+| `id`  | `string` | MongoDB `_id` of the transaction |
 
 **Response `200`:**
+
 ```json
 {
   "message": "Transaction deleted successfully",
@@ -1185,22 +1233,26 @@ Soft-deletes a transaction, keeping full audit logs in `DeletedTransactions`, re
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "Transaction not found" }` | No transaction with given ID |
-| `400` | `{ "error": "Cannot delete this income transaction: it would result in a negative account balance." }` | Reverse of income causes negative balance |
-| `403` | `{ "message": "Forbidden - Requires Admin role" }` | Non-admin caller |
+| Status | Body                                                                                                   | Condition                                 |
+| ------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `400`  | `{ "error": "Transaction not found" }`                                                                 | No transaction with given ID              |
+| `400`  | `{ "error": "Cannot delete this income transaction: it would result in a negative account balance." }` | Reverse of income causes negative balance |
+| `403`  | `{ "message": "Forbidden - Requires Admin role" }`                                                     | Non-admin caller                          |
 
 ---
+
 ### Analytics & Dashboard Routes — `/api/v1/analytics`
+
 ---
 
 #### `GET /api/v1/analytics/my-summary`
+
 Calculates and returns the total financial summary strictly for the logged-in user's own accounts.
 
 **Auth:** Any valid user token
 
 **Response `200`:**
+
 ```json
 {
   "totalIncome": 45000,
@@ -1208,8 +1260,11 @@ Calculates and returns the total financial summary strictly for the logged-in us
   "netBalance": 32150.2
 }
 ```
+
 ---
+
 #### `GET /api/v1/analytics/summary/account/:id`
+
 Calculates and returns the total financial summary for a single, specific account.
 For `viewer` roles, they are restricted strictly to calculations on accounts they own.
 
@@ -1221,6 +1276,7 @@ For `viewer` roles, they are restricted strictly to calculations on accounts the
 | `id` | `string` | MongoDB `_id` of the account to query |
 
 **Response `200`:**
+
 ```json
 {
   "totalIncome": 10000,
@@ -1235,23 +1291,41 @@ For `viewer` roles, they are restricted strictly to calculations on accounts the
 | `401` | `{ "error": "..." }` | Auth failure |
 | `403` | `{ "error": "Forbidden - You can only view summary for your own account" }` | Viewer attempts to access an account they do not own |
 | `404` | `{ "error": "Account not found" }` | No account found with given ID |
+
 ---
+
 #### `GET /api/v1/analytics/summary/categories`
+
 Calculates and returns an aggregated transaction breakdown grouped by category for analytics.
 Supports transaction filtering query parameters via `req.query`.
 
 **Auth:** `requireAnalyst` token required
 
 **Response `200`:**
+
 ```json
 {
   "summary": [
-    { "category": "rent", "income": 0, "expense": 1500, "total": 1500 }
+    {
+      "income": 23000,
+      "expense": 0,
+      "total": 23000,
+      "category": "salary"
+    },
+    {
+      "income": 0,
+      "expense": 1000,
+      "total": 1000,
+      "category": "rent"
+    }
   ]
 }
 ```
+
 ---
+
 #### `GET /api/v1/analytics/trends`
+
 Calculates and returns transactional volume grouped by `yearly` or `monthly` periods.
 
 **Auth:** `requireAnalyst` token required
@@ -1262,20 +1336,58 @@ Calculates and returns transactional volume grouped by `yearly` or `monthly` per
 | `period` | `string` | Use `"yearly"` for yearly grouping, `"monthly"` (default behavior) for monthly grouping |
 
 **Response `200`:**
+
 ```json
 [
-  { "month": "Jan", "year": 2026, "income": 5000, "expense": 1500 }
+  {
+    "month": "Apr",
+    "year": 2026,
+    "income": 26100,
+    "expense": 1000
+  }
 ]
 ```
+
 ---
+
 #### `GET /api/v1/analytics/recent`
+
 Fetches the latest transactions over the last 7 days natively unless bounded by filter query parameters.
 
 **Auth:** `requireAnalyst` token required
 
-**Response `200`:** Returns array of Transaction objects.
+**Response `200`:**
+
+```json
+[
+  {
+    "_id": "69d00f017b3329ba2e295b87",
+    "accountId": "69cfe8f3f3406b7336753bcf",
+    "amount": 3100,
+    "type": "income",
+    "category": "others",
+    "note": "Ok not sure what to do with this",
+    "createdBy": "69cf816fc1256642d9e4b8a1",
+    "createdAt": "2026-04-03T19:03:29.907Z",
+    "updatedAt": "2026-04-03T20:42:19.265Z",
+    "__v": 0
+  },
+  {
+    "_id": "69d00ece7b3329ba2e295b81",
+    "accountId": "69cfe867ebd40c2435fd6ee5",
+    "amount": 23000,
+    "type": "income",
+    "category": "salary",
+    "createdBy": "69cf816fc1256642d9e4b8a1",
+    "createdAt": "2026-04-03T19:02:38.947Z",
+    "updatedAt": "2026-04-03T19:02:38.947Z",
+    "__v": 0
+  }
+]
+```
 
 ---
+
 ### Test Routes — `/api/v1/test`
 
 > Development/staging utility routes. Not guarded by auth — **Not to be exposed in production.**
@@ -1289,6 +1401,7 @@ Sends a test email via Resend to validate the email service integration.
 **Auth:** None
 
 **Request Body:**
+
 ```json
 {
   "to": "recipient@example.com",
@@ -1298,6 +1411,7 @@ Sends a test email via Resend to validate the email service integration.
 ```
 
 **Response `200`:**
+
 ```json
 {
   "success": true,
@@ -1307,10 +1421,10 @@ Sends a test email via Resend to validate the email service integration.
 
 **Error Codes:**
 
-| Status | Body | Condition |
-|---|---|---|
-| `400` | `{ "error": "All fields required" }` | `to`, `subject`, or `message` missing |
-| `500` | `{ "error": "Internal Server error" }` | Resend API failure or unexpected error |
+| Status | Body                                   | Condition                              |
+| ------ | -------------------------------------- | -------------------------------------- |
+| `400`  | `{ "error": "All fields required" }`   | `to`, `subject`, or `message` missing  |
+| `500`  | `{ "error": "Internal Server error" }` | Resend API failure or unexpected error |
 
 ---
 
